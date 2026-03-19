@@ -6,17 +6,26 @@ Called from Keyboard Maestro via Execute Shell Script.
 All inputs come from KBM environment variables (KMVAR_*).
 
 Required environment variables:
-  KMVAR_EditType            "Full Edit" or "Select Edit"
-  KMVAR_PerformanceLetters  "Yes" or "No"
-                            (irrelevant for Select Edit - KBM sets to "Yes")
-  KMVAR_ScriptCheck         "Yes" or "No"
-  KMVAR_EpisodePathList     Multiline CSV, one episode per line:
-                              102,/path/to/script.pdf,IN LINE
-                              103,/path/to/script.pdf,NEXT LINE
-                              106,/path/to/script.pdf,DISNEY ADR/PU
-                              115,/path/to/sheet.csv,SPREADSHEET,EpCol,CharCol,LineCol
-                            Episode numbers WITHOUT the EP prefix.
-                            Formats: IN LINE, NEXT LINE, DISNEY ADR/PU, SPREADSHEET
+  KMVAR_EditType              "Full Edit" or "Select Edit"
+  KMVAR_PerformanceLetters    "Yes" or "No"
+                              (irrelevant for Select Edit - KBM sets to "Yes")
+  KMVAR_ScriptCheck           "Yes" or "No"
+  KMVAR_EpisodePathList       Multiline CSV, one episode per line:
+                                102,/path/to/script.pdf,IN LINE
+                                103,/path/to/script.pdf,NEXT LINE
+                                106,/path/to/script.pdf,DISNEY ADR/PU
+                                115,/path/to/sheet.csv,SPREADSHEET,EpCol,CharCol,LineCol
+                              Episode numbers WITHOUT the EP prefix.
+                              Formats: IN LINE, NEXT LINE, DISNEY ADR/PU, SPREADSHEET
+  KMVAR_CharacterLookupList   Multiline CSV built by KBM, one character per line:
+                                RegionName,ScriptName1[,ScriptName2,...]
+                              The type (ALIAS/ACTOR) is already stripped by KBM.
+                              Examples:
+                                MOUSE,MOUSE
+                                WHALE_inhome,WHALE
+                                HULK_BRUCE,HULK,BRUCE
+                                CITYGOERS_GREY,CITYGOERS
+                                STEVE_CAPTAIN AMERICA,STEVE,CAPTAIN AMERICA
 
 Session text files (always on Desktop):
   ~/Desktop/EPISODE_REGIONS.txt
@@ -28,15 +37,14 @@ Output:
   KBM captures this into a variable for display.
 
 PDF handling:
-  .pdf script paths are auto-converted via pdftotext, temp file written to
-  /tmp, read, then deleted.
+  .pdf script paths are auto-converted via pdftotext.
+  Temp file written to /tmp, read, then deleted.
 """
 
 import re
 import os
 import sys
 import subprocess
-import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
@@ -127,7 +135,7 @@ class Clip:
         """
         True if this clip is a selected take (_PREF).
         Everything after _PREF is ignored (build notes, perf letters).
-        _PREF_ALT counts as ALT not PREF (ALT wins if after PREF).
+        _PREF followed by _ALT counts as ALT not PREF.
         50A_ALT_PREF -> True  (line number is 50A_ALT, this is its PREF)
         """
         if re.search(r'_PREF.*_ALT', self.name, re.IGNORECASE):
@@ -161,7 +169,7 @@ class Clip:
         - After _PREF or _ALT, everything ignored (build notes, perf letters)
         - Raw ALL TAKES clips: strip trailing perf letter if present
             15a   -> 15       15A_b  -> 15A
-            20~21 -> 20~21    83A    -> 83A   (uppercase = part of line number)
+            20~21 -> 20~21    83A    -> 83A
 
         Examples:
           15a              -> 15
@@ -300,13 +308,14 @@ def parse_session_text(filepath: Path) -> list:
 def normalize_episode_name(name: str) -> str:
     """
     Normalize episode name for matching.
-    Strips EP/EPS prefix, uppercases, strips whitespace.
-    EP102  -> 102
-    EPS107 -> 107
-    EP102A PU -> 102A PU
+    Strips EP prefix but preserves everything after including S, letters etc.
+    EP102   -> 102
+    EPS102  -> S102
+    EP104A  -> 104A
+    EP102 PU -> 102 PU
     """
     name = name.strip().upper()
-    name = re.sub(r'^EPS?(?=\d)', '', name)
+    name = re.sub(r'^EP(?=\S)', '', name)
     return name
 
 
@@ -352,8 +361,8 @@ def build_regions(episode_clips: list, character_clips: list) -> list:
 def pdf_to_text(pdf_path: str) -> Optional[str]:
     """
     Convert a PDF to plain text using pdftotext.
-    Writes to a temp file in /tmp, reads it, deletes it.
-    Returns the text content, or None if conversion fails.
+    Writes to /tmp, reads it, deletes it.
+    Returns text content or None if conversion fails.
     """
     tmp_path = f"/tmp/clip_check_script_{os.getpid()}.txt"
     try:
@@ -377,8 +386,7 @@ def pdf_to_text(pdf_path: str) -> Optional[str]:
 
 def load_script_text(script_path: str) -> Optional[str]:
     """
-    Load script text from a file path.
-    Handles .pdf files via pdftotext, plain text files directly.
+    Load script text from file. Handles PDFs via pdftotext.
     """
     path = Path(script_path)
     if not path.exists():
@@ -534,15 +542,6 @@ def clean_script_text(text: str) -> str:
     text = strip_revision_markers(text)
     text = text.replace('#', '').replace("'", '')
     return text
-
-
-def normalize_character_for_matching(character_name: str) -> str:
-    """
-    Prepare character name for script matching.
-    Strips _inhome (always safe). Actor suffixes not auto-stripped.
-    """
-    name = re.sub(r'_inhome$', '', character_name, flags=re.IGNORECASE).strip()
-    return name
 
 
 def normalize_script_format(fmt: str) -> str:
@@ -737,23 +736,93 @@ def parse_script_for_character(script_text: str, script_format: str,
                                 spreadsheet_config: Optional[dict] = None
                                 ) -> list:
     """Dispatch to the correct parser based on normalized format key."""
-    clean_char = normalize_character_for_matching(character_name)
-
     if script_format == 'inline':
-        return parse_script_inline(script_text, clean_char)
+        return parse_script_inline(script_text, character_name)
     elif script_format == 'nextline':
-        return parse_script_nextline(script_text, clean_char)
+        return parse_script_nextline(script_text, character_name)
     elif script_format == 'disneyadr':
-        return parse_script_disney_adr(script_text, clean_char)
+        return parse_script_disney_adr(script_text, character_name)
     elif script_format == 'spreadsheet' and spreadsheet_config:
         return parse_script_spreadsheet(
-            script_text, clean_char, episode_number,
+            script_text, character_name, episode_number,
             spreadsheet_config.get('episode_col', 0),
             spreadsheet_config.get('character_col', 1),
             spreadsheet_config.get('line_number_col', 2)
         )
     else:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Character Lookup
+# ---------------------------------------------------------------------------
+
+def parse_character_lookup_list(raw: str) -> dict:
+    """
+    Parse CharacterLookupList multiline CSV into a lookup dict.
+
+    Each line: RegionName,ScriptName1[,ScriptName2,...]
+    The ALIAS/ACTOR type has already been stripped by KBM before
+    passing this variable to Python.
+
+    Examples:
+      MOUSE,MOUSE
+      WHALE_inhome,WHALE
+      HULK_BRUCE,HULK,BRUCE
+      CITYGOERS_GREY,CITYGOERS
+      STEVE_CAPTAIN AMERICA,STEVE,CAPTAIN AMERICA
+
+    Returns:
+      { region_name_upper: [script_name1, script_name2, ...] }
+    """
+    lookup = {}
+    if not raw.strip():
+        return lookup
+
+    for line in raw.strip().split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) < 2:
+            continue
+        region_name  = parts[0].upper()
+        script_names = [p for p in parts[1:] if p]
+        if script_names:
+            lookup[region_name] = script_names
+
+    return lookup
+
+
+def resolve_script_names(character_name: str,
+                         character_lookup: dict) -> list:
+    """
+    Given a character region name, return the list of script names to
+    search for.
+
+    Resolution order:
+      1. Strip _inhome if present
+      2. Check character_lookup (case-insensitive)
+      3. If found -> return the script names from the lookup
+      4. If not found and underscore present -> strip after last underscore
+      5. If not found and no underscore -> return name as-is
+
+    Returns a list of one or more script name strings.
+    """
+    # Step 1: always strip _inhome
+    name = re.sub(r'_inhome$', '', character_name, flags=re.IGNORECASE).strip()
+
+    # Step 2 & 3: check lookup
+    if name.upper() in character_lookup:
+        return character_lookup[name.upper()]
+
+    # Step 4: underscore present -> strip after last underscore
+    if '_' in name:
+        stripped = name.rsplit('_', 1)[0].strip()
+        return [stripped]
+
+    # Step 5: no underscore -> use as-is
+    return [name]
 
 
 # ---------------------------------------------------------------------------
@@ -771,10 +840,8 @@ def check_script(regions: list, all_clips: list,
                        Built from KMVAR_CharacterLookupList by KBM.
                        If None or empty, falls back to default name resolution.
 
-    For regions with multiple script names (aliases like HULK_BRUCE -> HULK, BRUCE),
-    the script is searched for ALL names and line numbers are combined.
-    A line is only flagged missing if it has no _PREF regardless of which
-    character name it was found under.
+    For alias characters (e.g. HULK_BRUCE -> HULK, BRUCE), the script is
+    searched for ALL names and line numbers are combined.
 
     PU sessions fall back to base episode number if no exact match.
     """
@@ -784,7 +851,7 @@ def check_script(regions: list, all_clips: list,
     results = {}
 
     for region in regions:
-        ep_key = region.episode  # already normalized (no EP prefix)
+        ep_key = region.episode
 
         script_entry = episode_scripts.get(ep_key)
         if script_entry is None:
@@ -807,7 +874,7 @@ def check_script(regions: list, all_clips: list,
         script_names = resolve_script_names(region.character, character_lookup)
 
         # Search script for ALL resolved names, combine results
-        all_script_lines = []
+        all_script_lines  = []
         seen_script_lines = set()
         for script_name in script_names:
             lines = parse_script_for_character(
@@ -878,8 +945,8 @@ def parse_episode_path_list(raw: str) -> dict:
             if len(parts) >= 6:
                 try:
                     spreadsheet_config = {
-                        'episode_col':    int(parts[3].strip()),
-                        'character_col':  int(parts[4].strip()) - 1,
+                        'episode_col':     int(parts[3].strip()),
+                        'character_col':   int(parts[4].strip()) - 1,
                         'line_number_col': int(parts[5].strip()) - 1,
                     }
                 except ValueError:
@@ -1006,95 +1073,21 @@ def format_report(mode: str,
 # Main
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# Character Lookup List Parser
-# ---------------------------------------------------------------------------
-
-def parse_character_lookup_list(raw: str) -> dict:
-    """
-    Parse CharacterLookupList multiline CSV into a lookup dict.
-
-    Each line: RegionName,ScriptName1[,ScriptName2,...]
-
-    Examples:
-      MOUSE,MOUSE
-      WHALE_inhome,WHALE
-      HULK_BRUCE,HULK,BRUCE
-      CITYGOERS_GREY,CITYGOERS
-      STEVE_CAPTAIN AMERICA,STEVE,CAPTAIN AMERICA
-
-    Returns:
-      { region_name_upper: [script_name1, script_name2, ...] }
-
-    If CharacterLookupList is empty or a region is not found,
-    the fallback is to strip everything after the last underscore.
-    """
-    lookup = {}
-    if not raw.strip():
-        return lookup
-
-    for line in raw.strip().split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-        parts = [p.strip() for p in line.split(',')]
-        if len(parts) < 2:
-            continue
-        region_name  = parts[0].upper()
-        script_names = [p for p in parts[1:] if p]
-        if script_names:
-            lookup[region_name] = script_names
-
-    return lookup
-
-
-def resolve_script_names(character_name: str,
-                         character_lookup: dict) -> list:
-    """
-    Given a character region name, return the list of script names to
-    search for in the script.
-
-    Resolution order:
-      1. Strip _inhome if present
-      2. Check character_lookup for the result
-      3. If found -> return the alias list from the lookup
-      4. If not found and underscore present -> strip after last underscore
-      5. If not found and no underscore -> return name as-is
-
-    Returns a list of one or more script name strings.
-    """
-    # Step 1: always strip _inhome
-    name = re.sub(r'_inhome$', '', character_name, flags=re.IGNORECASE).strip()
-
-    # Step 2 & 3: check lookup (case-insensitive)
-    if name.upper() in character_lookup:
-        return character_lookup[name.upper()]
-
-    # Step 4: underscore present -> strip after last underscore (actor name)
-    if '_' in name:
-        stripped = name.rsplit('_', 1)[0].strip()
-        return [stripped]
-
-    # Step 5: no underscore -> use as-is
-    return [name]
-
 def main():
     desktop = Path.home() / "Desktop"
 
     # --- Read KBM environment variables ---
-    edit_type_raw        = os.environ.get('KMVAR_EditType', 'Full Edit').strip()
-    perf_letters_raw     = os.environ.get('KMVAR_PerformanceLetters', 'No').strip()
-    script_check_raw     = os.environ.get('KMVAR_ScriptCheck', 'No').strip()
-    episode_path_raw     = os.environ.get('KMVAR_EpisodePathList', '').strip()
-    char_lookup_raw      = os.environ.get('KMVAR_CharacterLookupList', '').strip()
+    edit_type_raw    = os.environ.get('KMVAR_EditType', 'Full Edit').strip()
+    perf_letters_raw = os.environ.get('KMVAR_PerformanceLetters', 'No').strip()
+    script_check_raw = os.environ.get('KMVAR_ScriptCheck', 'No').strip()
+    episode_path_raw = os.environ.get('KMVAR_EpisodePathList', '').strip()
+    char_lookup_raw  = os.environ.get('KMVAR_CharacterLookupList', '').strip()
 
-    mode               = 'full' if 'Full' in edit_type_raw else 'select'
+    mode                = 'full' if 'Full' in edit_type_raw else 'select'
     performance_letters = perf_letters_raw.upper() == 'YES'
-    run_script_check   = script_check_raw.upper() == 'YES'
+    run_script_check    = script_check_raw.upper() == 'YES'
 
     # In Select Edit mode, performance_letters is irrelevant
-    # KBM sets it to Yes but we don't use it for ALL TAKES in select mode
     if mode == 'select':
         performance_letters = True
 
@@ -1125,7 +1118,7 @@ def main():
     if mode == 'full':
         missing_select_results = check_missing_selects(regions, all_clips)
 
-    # --- Parse character lookup list ---
+    # --- Parse character lookup ---
     character_lookup = parse_character_lookup_list(char_lookup_raw)
 
     # --- Script check ---
@@ -1153,4 +1146,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
