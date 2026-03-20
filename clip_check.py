@@ -503,12 +503,17 @@ def check_missing_selects(regions: list, all_clips: list) -> dict:
 
         recorded_lines = set()
         for clip in region_clips:
-            if clip.track != TRACK_ALL_TAKES:
-                continue
-            if clip.is_pref or clip.is_alt:
-                continue
-            for ln in clip.expanded_line_numbers:
-                recorded_lines.add(normalize_line_number(ln))
+            # ALL TAKES clips (excluding misplaced _PREF/_ALT)
+            if clip.track == TRACK_ALL_TAKES:
+                if clip.is_pref or clip.is_alt:
+                    continue
+                for ln in clip.expanded_line_numbers:
+                    recorded_lines.add(normalize_line_number(ln))
+            # _ALT clips on SELECTS track also count as recorded
+            # A line with only _ALT and no _PREF still needs a select
+            elif clip.track == TRACK_SELECTS and clip.is_alt:
+                for ln in clip.expanded_line_numbers:
+                    recorded_lines.add(normalize_line_number(ln))
 
         missing = sorted(
             recorded_lines - selected_lines,
@@ -1084,8 +1089,8 @@ def main():
     char_lookup_raw  = os.environ.get('KMVAR_CharacterLookupList', '').strip()
 
     mode                = 'full' if 'Full' in edit_type_raw else 'select'
-    performance_letters = perf_letters_raw.upper() == 'YES'
-    run_script_check    = script_check_raw.upper() == 'YES'
+    performance_letters = perf_letters_raw.upper() in ('YES', '1', 'TRUE')
+    run_script_check    = script_check_raw.upper() in ('YES', '1', 'TRUE')
 
     # In Select Edit mode, performance_letters is irrelevant
     if mode == 'select':
