@@ -584,7 +584,7 @@ def parse_script_inline(script_text: str, character_name: str) -> list:
     line_numbers = []
 
     pattern_left = re.compile(
-        r'^\s*(\d+[A-Z]*(?:_[A-Z]+)*)\s+.*?' + char_pattern,
+        r'^\s*(\d+[A-Za-z]*(?:_[A-Za-z]+)*)\s+.*?' + char_pattern,
         re.IGNORECASE | re.MULTILINE
     )
     for m in pattern_left.finditer(script_text):
@@ -594,7 +594,7 @@ def parse_script_inline(script_text: str, character_name: str) -> list:
             line_numbers.append(ln)
 
     pattern_right = re.compile(
-        r'^\s*.*?' + char_pattern + r'.*?\s+(\d+[A-Z]*(?:_[A-Z]+)*)\s*$',
+        r'^\s*.*?' + char_pattern + r'.*?\s+(\d+[A-Za-z]*(?:_[A-Za-z]+)*)\s*$',
         re.IGNORECASE | re.MULTILINE
     )
     for m in pattern_right.finditer(script_text):
@@ -631,7 +631,7 @@ def parse_script_nextline(script_text: str, character_name: str) -> list:
                 if not next_line.strip():
                     continue
 
-                m = re.match(r'^\s*(\d+[A-Z]*(?:_[A-Z]+)*)\s+\S', next_line)
+                m = re.match(r'^\s*(\d+[A-Za-z]*(?:_[A-Za-z]+)*)\s+\S', next_line)
                 if m:
                     ln = normalize_line_number(m.group(1))
                     if ln not in seen:
@@ -639,7 +639,7 @@ def parse_script_nextline(script_text: str, character_name: str) -> list:
                         line_numbers.append(ln)
                     break
 
-                m = re.search(r'\s+(\d+[A-Z]*(?:_[A-Z]+)*)\s*$', next_line)
+                m = re.search(r'\s+(\d+[A-Za-z]*(?:_[A-Za-z]+)*)\s*$', next_line)
                 if m:
                     ln = normalize_line_number(m.group(1))
                     if ln not in seen:
