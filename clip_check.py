@@ -961,10 +961,9 @@ def parse_episode_path_list(raw: str) -> dict:
                 print(f"  WARNING: SPREADSHEET entry missing column info for {ep_num}")
                 continue
 
-        print(f"  Loading script for episode {ep_num} ({fmt_raw})...")
         script_text = load_script_text(script_path)
         if script_text is None:
-            print(f"  WARNING: Could not load script for {ep_num}, skipping.")
+            print(f"  WARNING: Could not load script for episode {ep_num} - file not found or unreadable.")
             continue
 
         episode_scripts[ep_num] = (script_text, fmt, spreadsheet_config)
