@@ -1012,7 +1012,7 @@ def format_report(mode: str,
                 for name in data['pref_on_all_takes']:
                     lines.append(f"      • {name}")
             if data['takes_on_selects']:
-                lines.append("    Raw takes on SELECTS track (should be on ALL TAKES):")
+                lines.append("    ALL TAKES clips on SELECTS track (should be on ALL TAKES):")
                 for name in data['takes_on_selects']:
                     lines.append(f"      • {name}")
             lines.append("")
